@@ -33,14 +33,28 @@ engine = session['engine']
 
 with st.sidebar:
     st.header('Controles')
+    show_theory = st.checkbox('Mostrar explicaciones breves', value=True,
+                              help='Muestra u oculta las notas de teoría junto a los controles y las gráficas.')
     mode_choice = st.radio('Modo', ['Atmósfera', 'Molécula individual'], horizontal=True)
     mode = (SimulationMode.ATMOSPHERIC if mode_choice == 'Atmósfera'
             else SimulationMode.SINGLE_MOLECULE)
     count = st.slider('Moléculas', 1, 100, int(engine.num_molecules),
-                      disabled=mode == SimulationMode.SINGLE_MOLECULE)
+                      disabled=mode == SimulationMode.SINGLE_MOLECULE,
+                      help='Más moléculas ofrecen más oportunidades de encuentro con fotones y de colisión. '
+                           'El conteo del dibujo no equivale a una concentración en ppm.')
     temperature = st.slider('Temperatura (K)', 150, 400, int(engine.temperature_k),
-                            disabled=mode == SimulationMode.SINGLE_MOLECULE)
-    pressure = st.slider('Presión (atm)', 0.5, 3.0, float(engine.pressure_atm), 0.1)
+                            disabled=mode == SimulationMode.SINGLE_MOLECULE,
+                            help='La temperatura fija la escala inicial de las velocidades; '
+                                 'no es una lectura de la temperatura final del gas.')
+    if show_theory and mode == SimulationMode.ATMOSPHERIC:
+        st.caption('**Temperatura y movimiento:** al aumentar T, el modelo asigna '
+                   'mayor rapidez inicial: v ∝ √T.')
+    pressure = st.slider('Presión (atm)', 0.5, 3.0, float(engine.pressure_atm), 0.1,
+                         help='En este modelo modifica el ancho de las bandas y la probabilidad '
+                              'de relajación por colisión; no comprime el recinto ni cambia su población.')
+    if show_theory:
+        st.caption('**Presión y bandas:** una mayor presión ensancha el perfil ilustrativo. '
+                   'En la vista atmosférica también favorece la relajación por colisiones.')
     if 'wavelength_control' not in st.session_state:
         st.session_state.wavelength_control = float(engine.radiation.wavelength_um)
     st.subheader('Bandas IR de referencia')
@@ -53,10 +67,20 @@ with st.sidebar:
             col.button(label, help=explanation, use_container_width=True,
                        on_click=lambda x=value: setattr(st.session_state, 'wavelength_control', x))
     wavelength = st.slider('Longitud de onda (µm)', 2.0, 25.0,
-                           step=0.01, key='wavelength_control')
+                           step=0.01, key='wavelength_control',
+                           help='La energía por fotón es E = hc/λ. La absorción depende también '
+                                'de la coincidencia con una transición vibracional permitida.')
+    if show_theory:
+        st.caption('**Energía del fotón:** E = hν = hc/λ. Una longitud de onda menor '
+                   'corresponde a mayor energía por fotón.')
     intensity = st.slider('Intensidad de radiación (%)', 0, 100,
                           int(engine.radiation.intensity_percent),
-                          disabled=mode == SimulationMode.SINGLE_MOLECULE)
+                          disabled=mode == SimulationMode.SINGLE_MOLECULE,
+                          help='Controla el número de fotones de la fuente por unidad de tiempo del modelo. '
+                               'La escala es relativa y no está expresada en W/m².')
+    if show_theory and mode == SimulationMode.ATMOSPHERIC:
+        st.caption('**Intensidad y flujo:** al aumentarla llegan más fotones; '
+                   'si λ permanece fija, la energía de cada uno no cambia.')
     radiation_enabled = st.checkbox('Activar radiación IR',
                                     value=engine.radiation.is_enabled,
                                     disabled=mode == SimulationMode.SINGLE_MOLECULE)
@@ -68,7 +92,9 @@ with st.sidebar:
         vibration = st.checkbox('Animar vibración', value=engine.enable_vibration,
                                 help='Detiene el dibujo de la vibración; en la vista atmosférica '
                                      'siguen activas la absorción y la relajación.')
-        dipole = st.checkbox('Mostrar momento dipolar', value=engine.show_dipole)
+        dipole = st.checkbox('Mostrar momento dipolar', value=engine.show_dipole,
+                             help='La flecha verde representa el dipolo instantáneo. Para una transición '
+                                  'vibracional fundamental activa en IR, el dipolo debe cambiar con la vibración.')
         trails = st.checkbox('Mostrar trayectorias', value=engine.show_trails,
                              disabled=mode == SimulationMode.SINGLE_MOLECULE)
         speed = st.slider('Velocidad del modelo', 0.2, 3.0, float(engine.sim_speed), 0.1)
@@ -116,24 +142,42 @@ def live_view():
     st.image(scene_svg(engine), width='stretch', alt='Moléculas de CO₂ y fotones infrarrojos')
     if engine.mode == SimulationMode.ATMOSPHERIC:
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric('Tiempo simulado', f'{engine.elapsed_time:.1f} s')
-        m2.metric('Moléculas excitadas', f"{stats['excited_count']}/{stats['total_molecules']}")
-        m3.metric('Fotones incidentes', stats['photons_emitted'])
-        m4.metric('Absorción incidente', f"{stats['pct_absorbed']:.1f} %")
+        m1.metric('Tiempo simulado', f'{engine.elapsed_time:.1f} s',
+                  help='Reloj del modelo. No representa la escala temporal real de una vibración molecular.')
+        m2.metric('Moléculas excitadas', f"{stats['excited_count']}/{stats['total_molecules']}",
+                  help='Cantidad excitada en este instante. Puede bajar por reemisión o por colisiones; '
+                       'no es el total acumulado de absorciones.')
+        m3.metric('Fotones incidentes', stats['photons_emitted'],
+                  help='Total generado por la fuente desde el reinicio. No incluye los fotones reemitidos.')
+        m4.metric('Absorción incidente', f"{stats['pct_absorbed']:.1f} %",
+                  help='100 × fotones de la fuente absorbidos / fotones incidentes. '
+                       'Con cero incidentes se muestra 0.0 %.')
         st.caption(f"Fotones de fuente absorbidos: {stats['photons_absorbed']} · "
                    f"Absorciones totales: {stats['total_absorptions']} · "
                    f"Reemisiones: {stats['total_emissions']} · "
                    f"Relajaciones V–T: {stats['collisional_deexcitations']}")
+        if show_theory:
+            st.caption('**De la luz al movimiento:** absorber IR puede excitar una vibración. '
+                       'La molécula puede reemitir un fotón o transferir energía vibracional '
+                       'a movimiento traslacional durante una colisión (V–T).')
     else:
         name = mode_label(engine.single_molecule.vibration_mode.name)
         st.caption(f'Demostración manual · 1 molécula · sin flujo de fotones · {name}.')
         st.metric('Tiempo simulado', f'{engine.elapsed_time:.1f} s')
+        if show_theory:
+            st.caption('**Vibración y dipolo:** ν₂ y ν₃ cambian el momento dipolar y son activos en IR. '
+                       'En ν₁ los dipolos se cancelan. Aquí se fuerza el movimiento para observarlo, '
+                       'incluso cuando la transición fundamental es IR inactiva.')
     c1, c2 = st.columns(2)
     with c1:
         st.image(spectrum_svg(engine.pressure_atm, engine.radiation.wavelength_um),
                  width='stretch', alt='Espectro de absorción relativo')
         st.caption('Bandas ilustrativas: ν₃ cerca de 4.26 µm y ν₂ cerca de 15 µm. '
                    'El modo ν₁ de 7.50 µm es inactivo en la absorción dipolar fundamental.')
+        if show_theory:
+            st.caption('**Cómo leer el espectro:** los máximos señalan longitudes de onda '
+                       'favorables para la absorción. La curva es el perfil relativo del modelo; '
+                       'el porcentaje observado también depende de los encuentros con las moléculas.')
     with c2:
         if session['history']:
             st.image(energy_svg(session['history']), width='stretch',
@@ -141,9 +185,23 @@ def live_view():
         else:
             st.caption('Inicia la simulación para ver la evolución de la energía.')
         st.caption('Las energías cinética y vibracional usan las unidades del modelo.')
+        if show_theory:
+            st.caption('**Cómo leer la energía:** azul indica movimiento y rojo excitación vibracional. '
+                       'Una relajación V–T transforma vibración en traslación. La escala se reajusta '
+                       'y la gráfica no incluye la energía de los fotones.')
 
 
 live_view()
+if show_theory:
+    with st.expander('Prueba estas ideas'):
+        st.markdown('- Compara **15.0 µm y 10.0 µm** con los demás controles iguales: '
+                    '¿qué longitud de onda produce mayor absorción?')
+        st.markdown('- Mantén λ fija y cambia la **intensidad**: '
+                    '¿varía la energía por fotón o la cantidad de fotones incidentes?')
+        st.markdown('- Tras excitar moléculas, **apaga la fuente IR sin reiniciar**: '
+                    '¿siguen apareciendo reemisiones o relajaciones V–T?')
+        st.caption('Para comparar, reinicia antes de cada condición, usa el mismo tiempo simulado '
+                   'y repite las corridas: los encuentros son aleatorios.')
 with st.expander('Mostrar física: ecuaciones y límites del modelo'):
     st.markdown('**Energía de un fotón:** E = hν = hc/λ. Al disminuir la longitud '
                 'de onda, aumenta la energía del fotón. El número de onda es ν̄ = 1/λ '
@@ -169,3 +227,7 @@ with st.expander('Mostrar física: ecuaciones y límites del modelo'):
                'unidades del modelo; no incluye la energía de los fotones. La fuente, '
                'reemisión y cambios de controles intercambian energía con el sistema. '
                'No es un modelo climático cuantitativo.')
+    st.markdown('**Para consultar:** [energía de los fotones · NASA]'
+                '(https://imagine.gsfc.nasa.gov/science/toolbox/emspectrum2.html), '
+                '[frecuencias vibracionales del CO₂ · NIST]'
+                '(https://cccbdb.nist.gov/compvibs3x.asp?basis=8&casno=124389&charge=0&method=4).')
